@@ -1,0 +1,24 @@
+# Rust / Cargo
+/target
+**/target
+**/*.rs.bk
+# Editor/IDE
+.vscode/
+.idea/
+# Local or secret config
+.openmcp/
+*.secret
+*.env
+# Logs
+*.log
+# Model files (large blobs)
+super-agent/models/
+*.gguf
+*.bin
+*.ckpt
+# OS files
+.DS_Store
+Thumbs.db
+# Build artifacts
+/build
+/dist

@@ -15,6 +15,7 @@ use log::info;
 use tokio::signal;
 
 use crate::cli::commands::Commands;
+use crate::models::server::Provider;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -70,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
                 }
                 crate::cli::commands::ModelCmd::Serve { action, model } => {
                     let mgr = std::sync::Arc::new(mgr);
-                    let server = crate::models::ModelServer::new(mgr, cfg.model_server_addr);
+                    let server = crate::models::ModelServer::new(mgr.clone(), cfg.model_server_addr);
                     if action == "start" {
                         server.start_local_server().await?;
                         if let Some(mn) = model {

@@ -224,7 +224,8 @@ impl ModelServer {
 
         let app = Router::new().route("/v1/models", get(list_models)).route("/v1/chat/completions", post(chat));
         let addr = self.addr;
-        let server = axum::Server::bind(&addr).serve(app.into_make_service());
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        let server = axum::serve(listener, app.into_make_service());
         tokio::spawn(async move {
             if let Err(e) = server.await {
                 tracing::error!("model server error: {}", e);
@@ -270,4 +271,3 @@ mod tests {
         Ok(())
     }
 }
-

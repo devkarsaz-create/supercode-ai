@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use wasmtime::{Engine, Module, Store, Linker};
-use wasmtime_wasi::{WasiCtxBuilder, sync::WasiCtxBuilder as SyncWasiBuilder};
+use wasmtime_wasi::WasiCtxBuilder;
 use std::io::Write;
 
 /// Simple stdout capturer implementing `Write`
@@ -67,19 +67,22 @@ impl PluginEngine {
     /// with the host. We provide a `host.write(ptr, len)` function which reads linear memory
     /// from the guest and appends it to a host-side buffer which is returned as the output.
     pub fn call_skill(&self, name: &str, _input: Option<&str>) -> Result<String> {
-        use wasmtime::{Caller, Extern, Memory, Trap};
+        use wasmtime::{Caller, Extern};
         use std::sync::{Arc, Mutex};
 
         let module = self.modules.get(name).ok_or_else(|| anyhow::anyhow!("skill not found"))?;
 
         // Host state: a simple buffer to collect strings emitted by the wasm module.
-        #[derive(Clone)]
         struct HostData {
             out: Arc<Mutex<String>>,
+            wasi: wasmtime_wasi::WasiCtx,
         }
 
-        let host_state = HostData { out: Arc::new(Mutex::new(String::new())) };
-        let mut store = Store::new(&self.engine, host_state.clone());
+        let host_state = HostData {
+            out: Arc::new(Mutex::new(String::new())),
+            wasi: WasiCtxBuilder::new().inherit_stdio().build(),
+        };
+        let mut store = Store::new(&self.engine, host_state);
         let mut linker: Linker<HostData> = Linker::new(&self.engine);
 
         // Add a host function `host.write(ptr: i32, len: i32)`
@@ -87,10 +90,12 @@ impl PluginEngine {
             // get memory
             let mem = match caller.get_export("memory") {
                 Some(Extern::Memory(m)) => m,
-                _ => return Err(Trap::new("no memory export")),
+                _ => return Ok(()),
             };
             let mut buf = vec![0u8; len as usize];
-            mem.read(&caller, ptr as usize, &mut buf).map_err(|e| Trap::new(format!("memory read failed: {}", e)))?;
+            if mem.read(&caller, ptr as usize, &mut buf).is_err() {
+                return Ok(());
+            }
             let s = String::from_utf8_lossy(&buf).to_string();
             if let Ok(mut out) = caller.data().out.lock() {
                 out.push_str(&s);
@@ -102,10 +107,12 @@ impl PluginEngine {
         linker.func_wrap("host", "readdir", move |mut caller: Caller<'_, HostData>, ptr: i32, len: i32| {
             let mem = match caller.get_export("memory") {
                 Some(Extern::Memory(m)) => m,
-                _ => return Err(Trap::new("no memory export")),
+                _ => return Ok(()),
             };
             let mut buf = vec![0u8; len as usize];
-            mem.read(&caller, ptr as usize, &mut buf).map_err(|e| Trap::new(format!("memory read failed: {}", e)))?;
+            if mem.read(&caller, ptr as usize, &mut buf).is_err() {
+                return Ok(());
+            }
             let path = String::from_utf8_lossy(&buf).to_string();
             let mut list = vec![];
             if let Ok(entries) = std::fs::read_dir(&path) {
@@ -113,7 +120,10 @@ impl PluginEngine {
                     if let Some(n) = e.file_name().to_str() { list.push(n.to_string()); }
                 }
             }
-            let json = serde_json::to_string(&list).map_err(|e| Trap::new(format!("json error: {}", e)))?;
+            let json = match serde_json::to_string(&list) {
+                Ok(json) => json,
+                Err(_) => return Ok(()),
+            };
             if let Ok(mut out) = caller.data().out.lock() {
                 out.push_str(&json);
             }
@@ -121,21 +131,20 @@ impl PluginEngine {
         })?;
 
         // Add WASI support as well (optional) so modules can use standard libs if desired
-        let wasi_ctx = WasiCtxBuilder::new().inherit_stdio().build();
-        wasmtime_wasi::add_to_linker(&mut linker, |_: &mut HostData| wasi_ctx.clone())?;
+        wasmtime_wasi::add_to_linker(&mut linker, |data: &mut HostData| &mut data.wasi)?;
 
         // Instantiate and call
         let instance = linker.instantiate(&mut store, module)?;
         if let Some(func) = instance.get_func(&mut store, "run") {
-            let call = func.typed::<(), (), _>(&store)?;
+            let call = func.typed::<(), ()>(&store)?;
             call.call(&mut store, ())?;
         } else if let Some(start) = instance.get_func(&mut store, "_start") {
-            let call = start.typed::<(), (), _>(&store)?;
+            let call = start.typed::<(), ()>(&store)?;
             call.call(&mut store, ())?;
         }
 
         // Extract host buffer
-        let out = host_state.out.lock().unwrap().clone();
+        let out = store.data().out.lock().unwrap().clone();
         Ok(out)
     }
 }

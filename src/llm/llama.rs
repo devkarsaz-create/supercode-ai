@@ -2,6 +2,7 @@ use crate::types::Message;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct LlamaClient {
@@ -47,8 +48,12 @@ struct RespMsg {
 
 impl LlamaClient {
     pub fn new(endpoint: impl Into<String>, model: impl Into<String>) -> Self {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(60))
+            .build()
+            .unwrap_or_else(|_| Client::new());
         Self {
-            client: Client::new(),
+            client,
             endpoint: endpoint.into(),
             model: model.into(),
         }
@@ -76,6 +81,7 @@ impl LlamaClient {
             .json(&body)
             .send()
             .await?
+            .error_for_status()?
             .json::<ChatResponse>()
             .await
             .map_err(LlmError::Http)?;

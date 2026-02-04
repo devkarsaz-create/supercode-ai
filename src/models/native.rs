@@ -71,8 +71,7 @@ pub struct NativeModelInfo {
 impl NativeModelInfo {
     /// ایجاد اطلاعات مدل از مسیر فایل
     pub fn from_path(path: &PathBuf) -> Self {
-        let metadata = std::fs::metadata(path).unwrap_or_default();
-        let size = metadata.len();
+        let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         let name = path.file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("unknown")
@@ -248,7 +247,6 @@ impl NativeProvider {
         // }
 
         *self.load_state.lock().await = LoadState::Loaded;
-        self.info.is_loaded = true;
 
         Ok(())
     }
@@ -274,7 +272,6 @@ impl NativeProvider {
     /// تخلیه مدل از حافظه
     pub async fn unload(&self) -> anyhow::Result<()> {
         *self.load_state.lock().await = LoadState::Unloaded;
-        self.info.is_loaded = false;
         
         // TODO: آزادسازی حافظه GPU/CPU
         

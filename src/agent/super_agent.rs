@@ -2,8 +2,8 @@ use crate::agent::sub_agent::SubAgent;
 use crate::graph::dag::AgentGraph;
 use crate::llm::llama::LlamaClient;
 use crate::llm::Llm;
-use crate::tools::registry::{EchoTool, ToolRegistry};
-use crate::types::{AgentOutput, AgentState};
+use crate::tools::registry::EchoTool;
+use crate::types::AgentState;
 use std::sync::Arc;
 
 pub struct SuperAgent {
@@ -34,22 +34,25 @@ impl SuperAgent {
         reg.register(Arc::new(EchoTool));
 
         let plan = planner.plan(&goal).await?;
+        self.graph.add_node("planner", AgentState::Planning);
         self.scheduler = AgentState::Executing;
 
         let executor = SubAgent::new("executor", Arc::clone(&self.llm));
         executor.tools.register(Arc::new(EchoTool));
         let out = executor.execute(&plan).await?;
+        self.graph.add_node("executor", AgentState::Executing);
+        self.graph.add_edge(0, 1);
 
         self.scheduler = AgentState::Reviewing;
 
         // simple critic via llm
         let critic = SubAgent::new("critic", Arc::clone(&self.llm));
-        let critique = critic.plan(&out.text).await.unwrap_or_else(|_| "no critique".into());
-
-        // update graph (v0.1 simple linear add)
-        self.graph.add_node("planner", self.scheduler.clone());
-        self.graph.add_node("executor", self.scheduler.clone());
-        self.graph.add_edge(0, 1);
+        let critique = match critic.plan(&out.text).await {
+            Ok(text) => text,
+            Err(e) => format!("critic error: {}", e),
+        };
+        self.graph.add_node("critic", AgentState::Reviewing);
+        self.graph.add_edge(1, 2);
 
         self.scheduler = AgentState::Completed;
 

@@ -55,6 +55,7 @@ impl RuntimeConfig {
         } else {
             None
         }
+    }
 
     pub fn load() -> Self {
         if let Some(p) = Self::path() {
